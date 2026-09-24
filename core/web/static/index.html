@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#161b22">
+  <title>YOLO BBox Reviewer</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header id="topbar">
+    <div class="nav">
+      <button class="btn btn-ghost" id="btn-prev" title="ภาพก่อนหน้า (คีย์ A หรือ ←)">◀ ก่อนหน้า</button>
+      <button class="btn btn-ghost" id="btn-next" title="ภาพถัดไป (คีย์ D หรือ →)">ถัดไป ▶</button>
+      <button class="btn btn-ghost" id="btn-fullscreen" title="เปิด/ปิดโหมดเต็มจอ">⛶ เต็มจอ</button>
+    </div>
+    
+    <span id="confirm-badge">✓ ยืนยันแล้ว</span>
+    <div class="spacer"></div>
+    
+    <span id="status-label">กำลังโหลด...</span>
+    <button class="btn btn-confirm" id="btn-confirm" title="ยืนยันสถานะและไปรูปถัดไปทันที (คีย์ Space หรือ Enter)">
+      ✓ ยืนยัน &amp; ถัดไป
+    </button>
+  </header>
+
+  <!-- Main 3-Column Landscape Layout -->
+  <main id="main">
+    <!-- Left Tools Panel -->
+    <aside id="left-panel">
+      <div class="panel-header">เครื่องมือ</div>
+      <div class="tool-group">
+        <button class="tool-btn active" data-tool="select" title="เลือก / ย้าย / ปรับขนาดกรอบ (คีย์ 1)">
+          <span>↖</span> เลือก / แก้ไข
+        </button>
+        <button class="tool-btn" data-tool="draw" title="วาดกรอบสี่เหลี่ยมใหม่ (คีย์ 2)">
+          <span>⬜</span> วาดกรอบใหม่
+        </button>
+        <button class="tool-btn" data-tool="pan" title="เลื่อนภาพ (คีย์ 3)">
+          <span>✋</span> เลื่อนภาพ
+        </button>
+      </div>
+
+      <div class="panel-header">จัดการ BBox</div>
+      <div class="tool-group">
+        <button class="tool-btn" data-tool="delete" title="ลบกรอบที่เลือก (คีย์ Delete)">
+          <span>🗑️</span> ลบกรอบที่เลือก
+        </button>
+        <button class="tool-btn" data-tool="undo" title="ย้อนกลับการแก้ไข (Ctrl + Z)">
+          <span>↩️</span> ย้อนกลับ (Undo)
+        </button>
+      </div>
+    </aside>
+
+    <!-- Center Canvas Wrap -->
+    <section id="canvas-wrap" class="mode-select">
+      <canvas id="canvas-img"></canvas>
+      <canvas id="canvas-anno"></canvas>
+      <canvas id="canvas-ui"></canvas>
+
+      <!-- Floating Zoom & Fit Controls -->
+      <div id="zoom-overlay">
+        <button class="zoom-btn" id="btn-zoom-in" title="ซูมเข้า (คีย์ +)">+</button>
+        <span id="zoom-text">100%</span>
+        <button class="zoom-btn" id="btn-zoom-out" title="ซูมออก (คีย์ -)">−</button>
+        <button class="zoom-btn" id="btn-zoom-fit" title="ปรับให้พอดีหน้าจอ (คีย์ F)">⛶ พอดี</button>
+        <button class="zoom-btn" id="btn-zoom-100" title="ขนาดจริง 100% (คีย์ 0)">1:1</button>
+      </div>
+    </section>
+
+    <!-- Right Labels Panel -->
+    <aside id="right-panel">
+      <div class="panel-header" id="label-header">
+        <span>Labels</span>
+        <div class="sort-toggle" id="sort-controls">
+          <button class="sort-btn active" data-sort="alpha" title="เรียงตามตัวอักษร (A-Z)">A-Z</button>
+          <button class="sort-btn" data-sort="data" title="เรียงตามไฟล์ข้อมูล (Data ID)">ลำดับไฟล์</button>
+        </div>
+      </div>
+      <div id="label-list">
+        <!-- รายการ Label จะถูกเรนเดอร์อัตโนมัติผ่าน app.js -->
+      </div>
+    </aside>
+  </main>
+
+  <!-- Bottom Bar -->
+  <footer id="bottombar">
+    <span id="bottom-info">กำลังเชื่อมต่อเซิร์ฟเวอร์...</span>
+    <div class="spacer"></div>
+    <span>💡 แตะเลือก Bbox แล้วกดชื่อคลาสเพื่อเปลี่ยนชื่อ | กดชื่อคลาสแล้วแตะที่ว่างบนภาพเพื่อสร้าง Bbox</span>
+  </footer>
+
+  <!-- Hidden Color Picker -->
+  <input type="color" id="color-picker-input">
+
+  <!-- Toast Message -->
+  <div id="toast"></div>
+
+  <!-- Scripts: โหลดตามลำดับ SSOT และ Components -->
+  <script src="/static/js/state.js"></script>
+  <script src="/static/js/canvas.js"></script>
+  <script src="/static/js/interaction.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
