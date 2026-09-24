@@ -55,7 +55,7 @@ def parse_split_ratio(split_str: str) -> Tuple[float, float, float]:
 
 def detect_input_dirs(paths: List[str]) -> Tuple[Path, Path]:
     """
-    วิเคราะห์ paths ที่ส่งมาจาก --xanylabeling:
+    วิเคราะห์ paths ที่ส่งมาจาก --source / --inputs:
     - ถ้าส่งมา 1 path: โฟลเดอร์นั้นมีทั้งรูปภาพและ json
     - ถ้าส่งมา 2 paths: ตรวจสอบว่า path ไหนคือ images และ path ไหนคือ jsons อัตโนมัติ
     """
@@ -378,7 +378,7 @@ def convert_shape_to_yolo_line(
     task: str = "detect"
 ) -> Optional[str]:
     """
-    แปลง shape จาก X-AnyLabeling JSON เป็น YOLO line ตาม task:
+    แปลง shape จาก Annotation JSON เป็น YOLO line ตาม task:
     - detect: class_id xc yc w h
     - obb: class_id x1 y1 x2 y2 x3 y3 x4 y4 (normalized 0-1)
     """
@@ -453,30 +453,35 @@ def convert_shape_to_yolo_line(
 
 
 def build_dataset(
-    xanylabeling_paths: List[str],
-    output_dir: Path,
+    source_paths: Optional[List[str]] = None,
+    output_dir: Path = Path("datasets"),
     split_str: str = "70/20/10",
     task: str = "detect",
     classes_file: Optional[Path] = None,
     data_yaml_path: Optional[Path] = None,
     prioritize_verified: bool = True,
     only_verified: bool = False,
-    strict_val_test: bool = True
+    strict_val_test: bool = True,
+    xanylabeling_paths: Optional[List[str]] = None
 ):
     """
     ฟังก์ชันหลักในการสร้าง Dataset:
-    1. ตรวจจับและจับคู่รูปภาพกับ JSON จาก X-AnyLabeling พร้อมตรวจสถานะการยืนยัน (checked: true)
+    1. ตรวจจับและจับคู่รูปภาพกับ Annotation JSON พร้อมตรวจสถานะการยืนยัน (checked: true)
     2. ทำ Stratified Split ตามสัดส่วน โดยจัดสรรไฟล์ที่ผ่านการตรวจสอบไปเป็น Val/Test เพื่อความแม่นยำสูงสุด
     3. ทำ Hardlink ไฟล์ภาพไปยัง datasets/images/<split>/
     4. แปลง JSON เป็น YOLO Text TXT ไปยัง datasets/labels/<split>/
     5. อัปเดต/สร้าง data.yaml ให้พร้อมสั่งเทรนได้ทันที
     """
+    raw_paths = source_paths or xanylabeling_paths
+    if not raw_paths:
+        raise ValueError("จำเป็นต้องระบุพาธโฟลเดอร์รูปภาพและ Label ต้นทาง (--source)")
+
     print("=" * 70)
-    print("🚀 [START] Building YOLO Dataset from X-AnyLabeling")
+    print("🚀 [START] Building YOLO Dataset from Annotation JSONs")
     print("=" * 70)
 
     # 1. ตรวจสอบโฟลเดอร์อินพุต
-    image_dir, json_dir = detect_input_dirs(xanylabeling_paths)
+    image_dir, json_dir = detect_input_dirs(raw_paths)
     print(f"📁 Images Source: {image_dir}")
     print(f"📁 JSONs Source:  {json_dir}")
 

@@ -33,7 +33,7 @@ def run_auto_label(
     half: bool = True
 ):
     print("=" * 60)
-    print("🤖 [START] Batch Auto-Labeling on GPU for X-AnyLabeling")
+    print("🤖 [START] Batch Auto-Labeling on GPU (JSON Annotations)")
     print(f"📦 Model:       {model_path}")
     print(f"📁 Images Dir:  {images_dir}")
     if output_dir:

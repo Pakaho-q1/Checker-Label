@@ -17,7 +17,7 @@
 
 ## 🛠️ ขั้นตอนการทำ Workflow สำหรับ 4-Point OBB
 
-### 1. การ Label ข้อมูลบน X-AnyLabeling
+### 1. การทำ Annotation จุดพิกัดแบบ 4 จุด
 * **เครื่องมือ Polygon / Rotation Box**:
   * ใช้เครื่องมือ **Polygon** ปักจุด 4 จุดเรียงตามมุมเข็มนาฬิกา: บนซ้าย -> บนขวา -> ล่างขวา -> ล่างซ้าย
   * หรือใช้เครื่องมือ **Rotation Box / Rectangle** เพื่อกำหนดกรอบพร้อมมุมเอียง
@@ -27,7 +27,7 @@
 ### 2. การสร้าง Dataset ด้วย `--task obb`
 เมื่อรันคำสั่ง `build_dataset` ให้ระบุ flag `--task obb`:
 ```powershell
-python main.py build_dataset --xanylabeling raw_datasets/images raw_datasets/labels --task obb --split 80/10/10
+python main.py build_dataset --source raw_datasets/images raw_datasets/labels --task obb --split 80/10/10
 ```
 ระบบจะดึงพิกัดจุด 4 จุดจากไฟล์ JSON มาแปลงเป็นพิกัด Normalize 8 ค่าตามมาตรฐาน YOLO OBB โดยอัตโนมัติ
 

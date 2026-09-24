@@ -28,14 +28,14 @@ python main.py benchmark --weights runs/train/yolo_model/weights/best.pt --data 
 
 ## 2. 🔄 `convert` - สลับฟอร์แมต TXT <-> JSON
 
-ใช้สำหรับแปลงข้อมูลสลับไปมาระหว่าง **YOLO TXT** และ **X-AnyLabeling JSON** เพื่อความสะดวกในการเปิดตรวจทานหรือแก้ไขในโปรแกรม Annotation
+ใช้สำหรับแปลงข้อมูลสลับไปมาระหว่าง **YOLO TXT** และ **Annotation JSON** เพื่อความสะดวกในการเปิดตรวจทานหรือแก้ไขในโปรแกรม Annotation
 
 ### ตัวอย่างคำสั่ง:
 ```powershell
-# แปลงจาก YOLO TXT ไปเป็น X-AnyLabeling JSON (บันทึกคู่กับไฟล์ภาพ)
+# แปลงจาก YOLO TXT ไปเป็น Annotation JSON (บันทึกคู่กับไฟล์ภาพ)
 python main.py convert --data data.yaml --mode txt_to_json
 
-# แปลงจาก X-AnyLabeling JSON กลับเป็น YOLO TXT (เซฟลง labels/)
+# แปลงจาก Annotation JSON กลับเป็น YOLO TXT (เซฟลง labels/)
 python main.py convert --data data.yaml --mode json_to_txt
 ```
 
@@ -47,9 +47,9 @@ python main.py convert --data data.yaml --mode json_to_txt
 
 ---
 
-## 3. 📤 `export` - ส่งออกโมเดล ONNX สำหรับ AnyLabeling
+## 3. 📤 `export` - ส่งออกโมเดล ONNX พร้อมไฟล์ Config
 
-แปลงโมเดล `.pt` เป็นฟอร์แมต `.onnx` มาตรฐาน พร้อมสร้างไฟล์ตั้งค่า `custom_model.yaml` สำหรับนำไปโหลดเข้าเป็น Custom Model ในฟีเจอร์ Auto-Labeling ของโปรแกรม **X-AnyLabeling**
+แปลงโมเดล `.pt` เป็นฟอร์แมต `.onnx` มาตรฐาน พร้อมสร้างไฟล์ตั้งค่า `custom_model.yaml` สำหรับนำไปโหลดเข้าโปรแกรม Annotation หรือนำไป Deploy ใช้งานต่อได้ทันที
 
 ### ตัวอย่างคำสั่ง:
 ```powershell

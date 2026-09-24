@@ -33,13 +33,14 @@ def main():
     build_parser = subparsers.add_parser(
         "build_dataset",
         aliases=["build_datasets", "build-dataset"],
-        help="สร้าง YOLO Dataset จาก X-AnyLabeling พร้อม Hardlink และ Stratified Split"
+        help="สร้าง YOLO Dataset จาก Annotation JSON พร้อม Hardlink และ Stratified Split"
     )
     build_parser.add_argument(
-        "--xanylabeling", "-x",
+        "--source", "--inputs", "-i", "--raw", "-r", "--xanylabeling", "-x",
+        dest="source",
         nargs="+",
         required=True,
-        help="พาธโฟลเดอร์ X-AnyLabeling (ระบุ 1 โฟลเดอร์รวม หรือ 2 โฟลเดอร์ที่แยกภาพกับ json)"
+        help="พาธโฟลเดอร์รูปภาพและ Annotation JSON ต้นทาง (ระบุ 1 โฟลเดอร์รวม หรือ 2 โฟลเดอร์ที่แยกภาพกับ json)"
     )
     build_parser.add_argument(
         "--output", "-o",
@@ -281,7 +282,7 @@ def main():
     # -------------------------------------------------------------
     conv_parser = subparsers.add_parser(
         "convert",
-        help="แปลงสลับฟอร์แมตเดิมระหว่าง YOLO TXT <-> X-AnyLabeling JSON"
+        help="แปลงสลับฟอร์แมตเดิมระหว่าง YOLO TXT <-> Annotation JSON"
     )
     conv_parser.add_argument(
         "--data", "-d",
@@ -315,7 +316,7 @@ def main():
     # -------------------------------------------------------------
     exp_parser = subparsers.add_parser(
         "export",
-        help="Export โมเดลเป็น ONNX พร้อมสร้าง config yaml สำหรับ AnyLabeling"
+        help="Export โมเดลเป็น ONNX พร้อมสร้าง config yaml สำหรับโปรแกรม Label"
     )
     exp_parser.add_argument(
         "--weights", "-w",
@@ -342,7 +343,7 @@ def main():
     auto_parser = subparsers.add_parser(
         "auto_label",
         aliases=["autolabel"],
-        help="รันโมเดล Auto-Labeling บน GPU ทั้งโฟลเดอร์เพื่อสร้าง JSON สำหรับ X-AnyLabeling"
+        help="รันโมเดล Auto-Labeling บน GPU ทั้งโฟลเดอร์เพื่อสร้าง Annotation JSON"
     )
     auto_parser.add_argument(
         "--model", "-m",
@@ -513,7 +514,7 @@ def main():
     if args.command in ["build_dataset", "build_datasets", "build-dataset"]:
         classes_path = Path(args.classes_file) if args.classes_file else None
         build_dataset(
-            xanylabeling_paths=args.xanylabeling,
+            source_paths=args.source,
             output_dir=Path(args.output),
             split_str=args.split,
             task=args.task,

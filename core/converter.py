@@ -82,7 +82,7 @@ def load_yaml_config(yaml_path: Path):
 
 
 def convert_text_to_json(base_path: Path, splits: list, id_to_name: dict, limit: int = None):
-    print("\n--- [START] YOLO TXT -> X-AnyLabeling JSON ---")
+    print("\n--- [START] YOLO TXT -> Annotation JSON ---")
     for item in splits:
         if isinstance(item, tuple) and len(item) == 3:
             split, images_dir, labels_dir = item
@@ -177,7 +177,7 @@ def convert_text_to_json(base_path: Path, splits: list, id_to_name: dict, limit:
 
 
 def convert_json_to_text(base_path: Path, splits: list, name_to_id: dict, limit: int = None):
-    print("\n--- [START] X-AnyLabeling JSON -> YOLO TXT ---")
+    print("\n--- [START] Annotation JSON -> YOLO TXT ---")
     for item in splits:
         if isinstance(item, tuple) and len(item) == 3:
             split, images_dir, labels_dir = item

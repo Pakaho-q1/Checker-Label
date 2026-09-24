@@ -19,11 +19,11 @@
 
 **YOLO Training Toolkit** เป็นชุดเครื่องมือแบบครบวงจร (All-in-One CLI) สำหรับนักพัฒนา AI / Computer Vision ที่ต้องการสร้างไปป์ไลน์ตรวจจับวัตถุ (Object Detection) ตั้งแต่ขั้นตอนจัดการภาพดิบ ไปจนถึงการได้โมเดลพร้อมนำไปใช้งานจริงบน Production รองรับทั้ง **Axis-Aligned Bounding Box (`detect`)** และ **4-Point Oriented Bounding Box (`obb`)**
 
-เครื่องมือนี้เชื่อมต่อการทำงานระหว่าง **X-AnyLabeling**, **FastAPI Local Web Reviewer**, และ **Ultralytics YOLO** เข้าด้วยกันอย่างสมบูรณ์แบบ ช่วยลดระยะเวลาในการจัดเตรียมและคัดกรองข้อมูลลงมากกว่า 80%
+เครื่องมือนี้รวมกระบวนการทั้งหมดไว้ในที่เดียว ทั้ง **Batch GPU Auto-Labeling**, **FastAPI Local Web Reviewer**, และ **Ultralytics YOLO** เข้าด้วยกันอย่างสมบูรณ์แบบ ช่วยลดระยะเวลาในการจัดเตรียมและคัดกรองข้อมูลลงมากกว่า 80%
 
 ```mermaid
 flowchart LR
-    A[📁 ภาพถ่ายดิบ Raw Images] -->|auto_label บน GPU| B[🏷️ X-AnyLabeling JSONs]
+    A[📁 ภาพถ่ายดิบ Raw Images] -->|auto_label บน GPU| B[🏷️ Annotation JSONs]
     B -->|web reviewer บนมือถือ / PC| C[✅ Human Verification]
     C -->|build_dataset / export_verified| D[📦 Stratified Dataset & Hardlink]
     D -->|train & fine-tune| E[🎯 โมเดลตรวจจับ best.pt]
@@ -41,8 +41,8 @@ flowchart LR
 | ⚡ **Zero-Copy NTFS Hardlink** | จัดเตรียมชุดภาพเข้า Train/Val/Test โดย **ไม่เปลืองพื้นที่ดิสก์ซ้ำซ้อน** และเร็วทันทีระดับเสี้ยววินาที |
 | 🛡️ **Gold Standard Data Split** | คัดกรองไฟล์ที่มนุษย์ตรวจสอบแล้ว (`checked: true`) ให้เป็น Validation / Test เสมอ เพื่อวัดผลจริงไร้ Noise |
 | 📱 **Mobile & PC Web Reviewer** | ตรวจทานและแก้ไข Bbox ได้ทุกที่ผ่านเบราว์เซอร์มือถือ (Fullscreen + Gestures) หรือจอ PC |
-| 🚀 **High-Speed GPU Auto-Labeling** | รัน Batch Inference บน GPU เพื่อสร้างไฟล์ JSON สำหรับ X-AnyLabeling ทั้งโฟลเดอร์อัตโนมัติ |
-| 📤 **Seamless ONNX Export** | แปลงโมเดลเป็น `.onnx` พร้อมสร้างไฟล์ `custom_model.yaml` สำหรับโหลดเข้า X-AnyLabeling ได้ทันที |
+| 🚀 **High-Speed GPU Auto-Labeling** | รัน Batch Inference บน GPU เพื่อสร้างไฟล์ Annotation JSON ทั้งโฟลเดอร์อัตโนมัติ |
+| 📤 **Seamless ONNX Export** | แปลงโมเดลเป็น `.onnx` พร้อมสร้างไฟล์ `custom_model.yaml` สำหรับนำไปใช้งานต่อได้ทันที |
 
 ---
 
@@ -74,7 +74,7 @@ yolo_training/
 │   ├── verified_exporter.py # คัดแยกและส่งออกไฟล์ที่ยืนยันแล้ว
 │   └── web/                 # Web Application (FastAPI + HTML5 Canvas)
 │
-├── raw_datasets/            # ข้อมูลดิบจาก X-AnyLabeling (ภาพ + JSON)
+├── raw_datasets/            # ข้อมูลดิบรูปภาพและ Annotation JSON
 ├── datasets/                # ข้อมูลพร้อมเทรนที่ระบบสร้างขึ้น (Hardlinked)
 └── runs/                    # ผลลัพธ์และ Checkpoints จากการเทรน
 ```
@@ -123,7 +123,7 @@ python main.py web --images raw_datasets/images --labels raw_datasets/labels --c
 
 ### ขั้นตอนที่ 3: สร้าง Dataset สำหรับเทรน (พร้อม Hardlink & Gold Standard Split)
 ```powershell
-python main.py build_dataset --xanylabeling raw_datasets/images raw_datasets/labels --split 80/10/10 --task detect
+python main.py build_dataset --source raw_datasets/images raw_datasets/labels --split 80/10/10 --task detect
 ```
 
 ### ขั้นตอนที่ 4: สั่งเทรนโมเดล YOLO
@@ -153,11 +153,11 @@ python main.py train --model yolo11n.pt --data data.yaml --epochs 100 --batch 16
 
 | คำสั่ง (Subcommand) | ตัวอย่างการเรียกใช้งาน | วัตถุประสงค์ |
 |---|---|---|
-| `build_dataset` | `python main.py build_dataset -x img/ lbl/ -s 80/10/10` | สร้างชุด Train/Val/Test พร้อม Hardlink |
+| `build_dataset` | `python main.py build_dataset --source img/ lbl/ -s 80/10/10` | สร้างชุด Train/Val/Test พร้อม Hardlink |
 | `train` | `python main.py train -m yolo11n.pt -d data.yaml -e 100` | สั่งเทรนโมเดลตรวจจับวัตถุ |
 | `benchmark` | `python main.py benchmark -w best.pt -d data.yaml --split test` | ประเมินผล mAP50 และ mAP50-95 |
-| `convert` | `python main.py convert -d data.yaml --mode txt_to_json` | สลับฟอร์แมตระหว่าง YOLO TXT และ AnyLabeling JSON |
-| `export` | `python main.py export -w best.pt --imgsz 640` | แปลงโมเดลเป็น ONNX พร้อม AnyLabeling YAML |
+| `convert` | `python main.py convert -d data.yaml --mode txt_to_json` | สลับฟอร์แมตระหว่าง YOLO TXT และ Annotation JSON |
+| `export` | `python main.py export -w best.pt --imgsz 640` | แปลงโมเดลเป็น ONNX พร้อมไฟล์ config yaml |
 | `auto_label` | `python main.py auto_label -m best.pt -i images/ --batch 16` | รันโมเดลทำ Annotation อัตโนมัติบน GPU |
 | `web` | `python main.py web -i images/ -l labels/ -c classes.txt` | เปิด Web UI ตรวจสอบและแก้ไข Bbox |
 | `export_verified` | `python main.py export_verified -i img/ -l lbl/ -o verified/` | ดึงเฉพาะไฟล์ที่ตรวจสอบแล้วส่งออกเป็น Hardlink |
@@ -166,10 +166,10 @@ python main.py train --model yolo11n.pt --data data.yaml --epochs 100 --batch 16
 
 ## 🤝 เครดิตและการอ้างอิง (Credits & Acknowledgments)
 
-ขอขอบคุณเครื่องมือ Open-Source คุณภาพสูงที่ทำให้โปรเจกต์นี้เกิดขึ้นได้:
+ขอขอบคุณเครื่องมือ Open-Source คุณภาพสูงที่สร้างแรงบันดาลใจและเกื้อหนุนให้โปรเจกต์นี้เกิดขึ้นได้:
 
 * **[Ultralytics YOLO](https://github.com/ultralytics/ultralytics)**: สถาปัตยกรรมโมเดล Deep Learning สำหรับ Real-time Object Detection และ OBB
-* **[X-AnyLabeling](https://github.com/CVHub520/X-AnyLabeling)**: โปรแกรม Annotation ชั้นนำ และฟอร์แมต JSON มาตรฐาน
+* **[X-AnyLabeling](https://github.com/CVHub520/X-AnyLabeling)**: แรงบันดาลใจสำหรับโครงสร้าง Annotation JSON มาตรฐานและการทำงานร่วมกัน
 * **[FastAPI](https://fastapi.tiangolo.com/)** & **[Uvicorn](https://www.uvicorn.org/)**: เว็บเฟรมเวิร์กประสิทธิภาพสูงสำหรับรัน Local Web Annotation Reviewer
 * **[OpenCV](https://opencv.org/)** & **[Pillow](https://python-pillow.org/)**: ไลบรารีประมวลผลรูปภาพและจัดทำ Perspective Transformations
 
