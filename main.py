@@ -16,6 +16,7 @@ from core.exporter import export_model
 from core.auto_labeler import run_auto_label
 from core.web.server import start_web_server
 from core.verified_exporter import export_verified_dataset
+from core.auditor import run_audit
 
 
 def main():
@@ -98,6 +99,12 @@ def main():
     train_parser = subparsers.add_parser(
         "train",
         help="สั่งเทรนโมเดล YOLO (รองรับทั้ง Detect และ OBB 4-point)"
+    )
+    train_parser.add_argument(
+        "--template", "-t",
+        type=str,
+        default=None,
+        help="พาทไฟล์ YAML สำหรับตั้งค่า Training (ถ้าใช้ จะละเว้น config ใน command line บางส่วน)"
     )
     train_parser.add_argument(
         "--model", "-m",
@@ -348,8 +355,14 @@ def main():
     auto_parser.add_argument(
         "--model", "-m",
         type=str,
-        required=True,
+        default=None,
         help="พาธโมเดล เช่น runs/train/yolo_model/weights/best.pt"
+    )
+    auto_parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="พาทไฟล์ YAML สำหรับตั้งค่า Ensemble"
     )
     auto_parser.add_argument(
         "--images", "-i",
@@ -367,7 +380,13 @@ def main():
         "--conf", "-c",
         type=float,
         default=0.45,
-        help="Confidence threshold (ค่าเริ่มต้น: 0.45)"
+        help="Confidence threshold หลัก สำหรับบันทึกกล่องลงใน shapes (ค่าเริ่มต้น: 0.45)"
+    )
+    auto_parser.add_argument(
+        "--conf-min", "--raw-conf",
+        type=float,
+        default=0.15,
+        help="Confidence ขั้นต่ำสำหรับเก็บ candidate ลง raw_shapes เพื่อตรวจใน Web UI (ค่าเริ่มต้น: 0.15)"
     )
     auto_parser.add_argument(
         "--iou",
@@ -437,6 +456,69 @@ def main():
         type=int,
         default=8000,
         help="Port สำหรับรัน Web Server (ค่าเริ่มต้น: 8000)"
+    )
+
+    # -------------------------------------------------------------
+    # Subcommand: audit
+    # -------------------------------------------------------------
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="ตรวจสอบและกรองรูปภาพที่ไม่ได้คุณภาพ (ภาพเล็ก, ภาพซ้ำ) ออกจาก Dataset"
+    )
+    audit_parser.add_argument(
+        "--images", "-i",
+        type=str,
+        required=True,
+        help="พาธโฟลเดอร์รูปภาพ"
+    )
+    audit_parser.add_argument(
+        "--labels", "-l",
+        type=str,
+        default=None,
+        help="พาธโฟลเดอร์ JSON"
+    )
+    audit_parser.add_argument(
+        "--out-images", "-o",
+        type=str,
+        default=None,
+        help="โฟลเดอร์ปลายทางสำหรับย้ายไฟล์ขยะ (ภาพ) ไปกักกัน (Quarantine)"
+    )
+    audit_parser.add_argument(
+        "--template", "-t",
+        type=str,
+        default=None,
+        help="พาทไฟล์ YAML สำหรับตั้งค่า Audit"
+    )
+    audit_parser.add_argument(
+        "--out-labels",
+        type=str,
+        default=None,
+        help="โฟลเดอร์ปลายทางสำหรับย้ายไฟล์ขยะ (JSON) ไปกักกัน"
+    )
+    audit_parser.add_argument(
+        "--mode", "-m",
+        type=str,
+        choices=["move", "copy", "hardlink"],
+        default="move",
+        help="วิธีการจัดการไฟล์ขยะ (move = ย้ายออก, copy = คัดลอก, hardlink)"
+    )
+    audit_parser.add_argument(
+        "--width", "-w",
+        type=int,
+        default=0,
+        help="ความกว้างขั้นต่ำ (น้อยกว่านี้ = ไฟล์ขยะ)"
+    )
+    audit_parser.add_argument(
+        "--height",
+        type=int,
+        default=0,
+        help="ความสูงขั้นต่ำ (น้อยกว่านี้ = ไฟล์ขยะ)"
+    )
+    audit_parser.add_argument(
+        "--duplicate", "-d",
+        type=int,
+        default=-1,
+        help="ระดับความเหมือนของภาพซ้ำ (0=เหมือน 100%, 2-4=คล้ายมาก) แนะนำ: 2"
     )
 
     # -------------------------------------------------------------
@@ -549,7 +631,8 @@ def main():
             shear=args.shear,
             scale=args.scale,
             hsv_v=args.hsv_v,
-            close_mosaic=args.close_mosaic
+            close_mosaic=args.close_mosaic,
+            config_file=args.template
         )
 
     elif args.command in ["benchmark", "val"]:
@@ -584,11 +667,13 @@ def main():
             images_dir=args.images,
             output_dir=args.output,
             conf_threshold=args.conf,
+            conf_min=args.conf_min,
             iou_threshold=args.iou,
             batch_size=args.batch,
             imgsz=args.imgsz,
             device=args.device,
-            half=not args.no_half
+            half=not args.no_half,
+            config_file=args.config
         )
 
     elif args.command == "web":
@@ -598,6 +683,19 @@ def main():
             classes_file=args.classes,
             host=args.host,
             port=args.port
+        )
+
+    elif args.command == "audit":
+        run_audit(
+            images_dir=args.images,
+            labels_dir=args.labels,
+            out_images=args.out_images,
+            out_labels=args.out_labels,
+            mode=args.mode,
+            min_width=args.width,
+            min_height=args.height,
+            dup_threshold=args.duplicate,
+            config_file=args.template
         )
 
     elif args.command in ["export_verified", "export-verified", "filter_verified", "filter-verified"]:

@@ -17,7 +17,8 @@ from core.dataset_builder import (
     create_hardlink_or_copy,
     load_classes,
     convert_shape_to_yolo_line,
-    find_classes_file
+    find_classes_file,
+    JSONCache
 )
 
 try:
@@ -112,23 +113,22 @@ def export_verified_dataset(
         if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
             image_map[f.stem] = f
 
-    # 4. สแกนหาไฟล์ JSON ที่ผ่านการตรวจสอบแล้ว (checked: true)
+    # 4. โหลดข้อมูล JSON ทั้งหมดอย่างรวดเร็วด้วย JSONCache (ใช้งาน dataset.db เพื่อหลีกเลี่ยงคอขวด)
     all_json_files = list(src_lbl_dir.glob("*.json"))
     verified_items: List[Tuple[Path, Path, Dict[str, Any]]] = []
-
+    
     print(f"🔍 สแกนพบ Label ทั้งหมด {len(all_json_files)} ไฟล์...")
+    json_cache = JSONCache(src_img_dir, src_lbl_dir, classes_file)
+
     for jf in all_json_files:
         try:
-            with open(jf, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            data = json_cache.get_data(jf)
             is_checked = bool(data.get("checked", False) or data.get("verified", False))
             if is_checked:
-                # จับคู่กับไฟล์ภาพ
                 img_p = image_map.get(jf.stem)
                 if img_p and img_p.exists():
                     verified_items.append((img_p, jf, data))
                 else:
-                    # ตรวจสอบชื่อจาก imagePath ใน JSON
                     ip = data.get("imagePath")
                     if ip:
                         alt_img = src_img_dir / ip

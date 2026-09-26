@@ -121,7 +121,46 @@ def find_classes_file(specified: Optional[Path], candidate_dirs: List[Path]) -> 
     return None
 
 
-def load_classes(classes_file: Optional[Path], all_json_files: List[Path], candidate_dirs: Optional[List[Path]] = None) -> Tuple[List[str], Dict[str, int]]:
+class JSONCache:
+    def __init__(self, images_dir: Path, labels_dir: Path, classes_file: Optional[Path]):
+        self.data_map = {}
+        self.use_db = False
+        
+        try:
+            from core.web.dataset_manager import DatasetManager
+            import sqlite3
+            print(f"🚀 [Speed Optimization] กำลังโหลดและซิงค์ข้อมูลด้วย DatasetManager (Multithreaded SQLite)...")
+            
+            # Use DatasetManager to guarantee DB is created and perfectly synced
+            manager = DatasetManager(images_dir, labels_dir, classes_file)
+            
+            conn = manager._get_connection()
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT stem, width, height, confirmed, shapes_json FROM items").fetchall()
+            for row in rows:
+                shapes = json.loads(row["shapes_json"]) if row["shapes_json"] else []
+                self.data_map[row["stem"]] = {
+                    "imageWidth": row["width"],
+                    "imageHeight": row["height"],
+                    "checked": bool(row["confirmed"]),
+                    "shapes": shapes
+                }
+            self.use_db = True
+            print(f"⚡ โหลดแคชสำเร็จ {len(self.data_map)} รายการ อย่างรวดเร็ว!")
+        except Exception as e:
+            print(f"⚠️ ไม่สามารถซิงค์ DB ได้: {e} -> จะถอยกลับไปอ่านไฟล์ JSON โดยตรงทีละไฟล์")
+            self.use_db = False
+                
+    def get_data(self, json_p: Path) -> dict:
+        if self.use_db and json_p.stem in self.data_map:
+            return self.data_map[json_p.stem]
+        try:
+            with open(json_p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+def load_classes(classes_file: Optional[Path], all_json_files: List[Path], candidate_dirs: Optional[List[Path]] = None, cache: Optional[JSONCache] = None) -> Tuple[List[str], Dict[str, int]]:
     """
     โหลดรายชื่อคลาสจากไฟล์ classes.txt หรือถ้าไม่มีจะดึงคลาสทั้งหมดที่มีใน JSONs
     """
@@ -136,8 +175,11 @@ def load_classes(classes_file: Optional[Path], all_json_files: List[Path], candi
     found_labels = set()
     for jf in all_json_files:
         try:
-            with open(jf, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            data = cache.get_data(jf) if cache else {}
+            if not data and not cache:
+                with open(jf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    
             for shape in data.get("shapes", []):
                 lbl = shape.get("label")
                 if lbl:
@@ -155,11 +197,14 @@ def load_classes(classes_file: Optional[Path], all_json_files: List[Path], candi
 
 def greedy_multilabel_split(
     samples: List[Tuple],
-    ratios: Tuple[float, float, float]
+    ratios: Tuple[float, float, float],
+    prioritize_verified: bool = False
 ) -> Dict[str, List[Tuple]]:
     """
     Greedy Multi-label Stratified Split เพื่อเกลี่ยให้แต่ละ split มีการกระจายของทุก class
     ใกล้เคียงกับสัดส่วน target (train, val, test) มากที่สุด
+    หาก prioritize_verified=True จะให้ความสำคัญกับไฟล์ที่ตรวจสอบแล้วลงใน Val/Test ก่อนเสมอ
+    โดยไม่ทำให้เสียสมดุลการกระจายคลาส
     """
     r_train, r_val, r_test = ratios
     split_names = []
@@ -182,6 +227,12 @@ def greedy_multilabel_split(
     if total_w > 0:
         split_weights = [w / total_w for w in split_weights]
 
+    total_samples = len(samples)
+    target_sizes = {s: round(total_samples * w) for s, w in zip(split_names, split_weights)}
+    diff = total_samples - sum(target_sizes.values())
+    if split_names:
+        target_sizes[split_names[0]] += diff
+
     # คำนวณ class frequencies รวม
     class_total = Counter()
     for item in samples:
@@ -198,37 +249,63 @@ def greedy_multilabel_split(
     current_counts = {name: Counter() for name in split_names}
     split_samples = {name: [] for name in split_names}
 
-    # จัดลำดับ samples โดยให้ sample ที่มี class หายาก (frequency ต่ำ) ถูกจัดสรรก่อน
-    def sample_rarity_score(item):
+    # จัดลำดับ samples
+    def sample_sort_key(item):
         labels = item[2]
-        if not labels:
-            return 999999
-        return min(class_total[lbl] for lbl in labels)
+        # หา rarity
+        rarity = min((class_total[lbl] for lbl in labels), default=999999)
+        # ถ้า prioritize_verified ให้ไฟล์ verified (item[3] == True) ถูกประมวลผลก่อน (ค่า 0)
+        is_verified = item[3] if len(item) > 3 else False
+        priority = 0 if (prioritize_verified and is_verified) else 1
+        return (priority, rarity)
 
-    sorted_samples = sorted(samples, key=sample_rarity_score)
+    sorted_samples = sorted(samples, key=sample_sort_key)
 
     for item in sorted_samples:
-        img_p, json_p, labels = item[0], item[1], item[2]
+        labels = item[2]
         lbl_set = set(labels)
+        is_verified = item[3] if len(item) > 3 else False
 
-        # หาว่า split ใดต้องการ sample นี้มากที่สุด
         best_split = None
-        best_need = -float("inf")
+        best_score = -float("inf")
 
         for s_name in split_names:
-            # คำนวณความต้องการ (need) จาก deficit ของ class
-            if lbl_set:
-                need = sum(
-                    (target_counts[s_name][lbl] - current_counts[s_name][lbl])
-                    for lbl in lbl_set
-                )
+            cap_left = target_sizes[s_name] - len(split_samples[s_name])
+            if cap_left <= 0:
+                cap_factor = 0.05  # ป้องกันไม่ให้ split ที่เต็มแล้วแย่ง sample เพิ่ม
             else:
-                # ถ้าไม่มี label ดูจากขนาดรวมเทียบกับ target weight
-                target_sz = len(samples) * dict(zip(split_names, split_weights))[s_name]
-                need = target_sz - len(split_samples[s_name])
+                cap_factor = cap_left / max(target_sizes[s_name], 1)
 
-            if need > best_need:
-                best_need = need
+            if lbl_set:
+                rel_deficit = 0.0
+                can_bias = True
+                for lbl in lbl_set:
+                    t = target_counts[s_name][lbl]
+                    c = current_counts[s_name][lbl]
+                    if t > 0:
+                        rel_deficit += (t - c) / t
+                    else:
+                        rel_deficit -= 1.0
+                    
+                    if c >= t:
+                        can_bias = False
+
+                score = rel_deficit * cap_factor
+                
+                # Bias พิเศษดึง verified เข้า Val/Test
+                # โดยจะดึงก็ต่อเมื่อ "ทุกคลาส" ในภาพนั้นๆ ยังไม่ล้นโควต้าของ split นี้
+                if prioritize_verified and is_verified and s_name in ["val", "test"]:
+                    if can_bias:
+                        score += 10.0
+            else:
+                score = cap_factor
+                # ภาพไม่มี object ให้กระจายตามปกติ แต่ถ้า verified ให้อยู่ val/test (ถ้ายังไม่เต็ม)
+                if prioritize_verified and is_verified and s_name in ["val", "test"]:
+                    if cap_left > 0:
+                        score += 10.0
+
+            if score > best_score:
+                best_score = score
                 best_split = s_name
 
         if best_split is None:
@@ -250,103 +327,44 @@ def split_dataset_with_verification(
 ) -> Dict[str, List[Tuple[Path, Optional[Path], List[str], bool]]]:
     """
     แบ่งชุดข้อมูลตามสัดส่วน โดยจัดสรรไฟล์ที่ผ่านการยืนยันแล้ว (checked: true)
-    ให้ไปเป็น Val และ Test ก่อนเสมอเพื่อสร้าง Gold Standard Benchmark ที่แม่นยำ 100%
+    ให้ไปเป็น Val และ Test ก่อนเสมอ แต่ "ต้องรักษา" สัดส่วน Class Distribution
+    และเป้าหมายของ Train/Val/Test ให้สมดุลกันเสมอตามที่ระบุใน ratios (เช่น 80/10/10)
     """
     r_train, r_val, r_test = ratios
 
-    verified_samples = [s for s in samples if s[3]]
-    unverified_samples = [s for s in samples if not s[3]]
-    total_samples = len(samples)
-
     if only_verified:
+        verified_samples = [s for s in samples if s[3]]
         if not verified_samples:
             raise ValueError(
                 "❌ ไม่พบไฟล์ที่ได้รับการยืนยัน (checked: true) เลยในชุดข้อมูล แต่มีการระบุ --only-verified"
             )
         print(f"🔒 [Mode: Only-Verified] ใช้เฉพาะไฟล์ที่ผ่านการตรวจสอบ {len(verified_samples)} ภาพเท่านั้น (ตัดภาพที่ยังไม่ตรวจออก)")
-        return greedy_multilabel_split(verified_samples, ratios)
+        return greedy_multilabel_split(verified_samples, ratios, prioritize_verified=False)
+
+    verified_samples = [s for s in samples if s[3]]
+    total_samples = len(samples)
 
     if not prioritize_verified or len(verified_samples) == 0:
         if len(verified_samples) == 0 and prioritize_verified:
             print("ℹ️  ไม่พบไฟล์ที่ได้รับการยืนยัน (checked: true) ในชุดข้อมูล -> ดำเนินการแบ่งข้อมูลทั้งหมดตามปกติ")
-        return greedy_multilabel_split(samples, ratios)
+        else:
+            print("ℹ️  โหมด Prioritize-Verified ปิดอยู่ -> ดำเนินการกระจายข้อมูลทั้งหมดตามปกติโดยไม่แยก Verified")
+        return greedy_multilabel_split(samples, ratios, prioritize_verified=False)
 
     # กรณี prioritize_verified = True และมี verified_samples > 0
-    print(f"🛡️  [Mode: Prioritize-Verified] พบไฟล์ยืนยันแล้ว {len(verified_samples)} ภาพ (จากทั้งหมด {total_samples} ภาพ)")
+    print(f"🛡️  [Mode: Prioritize-Verified (Stratified Balanced)] พบไฟล์ยืนยันแล้ว {len(verified_samples)} ภาพ (จากทั้งหมด {total_samples} ภาพ)")
+    print(f"  • จัดสรรไฟล์ Verified ลง Val และ Test ก่อน โดยยังคงรักษาสัดส่วนสมดุลของทุกคลาส (Train {r_train*100}%, Val {r_val*100}%, Test {r_test*100}%)")
+    print(f"  • หากคลาสใดใน Val/Test ขาด Verified จะนำ Unverified มาเติมให้เต็มโควต้า")
 
-    # คำนวณเป้าหมาย Val & Test
-    target_val = round(total_samples * r_val) if r_val > 0 else 0
-    target_test = round(total_samples * r_test) if r_test > 0 else 0
-    target_eval = target_val + target_test
-    v_count = len(verified_samples)
+    # ใช้ Greedy Multilabel Split โดยให้ bias ดึง verified เข้า val/test อย่างชาญฉลาด
+    splits = greedy_multilabel_split(samples, ratios, prioritize_verified=True)
 
-    splits = {"train": [], "val": [], "test": []}
-
-    if v_count > target_eval and target_eval > 0:
-        # จำนวน Verified มากพอที่จะเติม Val และ Test เต็มโควต้า และมีส่วนเกินส่งต่อไปช่วยชุด Train
-        v_train = v_count - target_eval
-        w_train = v_train / v_count
-        w_val = target_val / v_count
-        w_test = target_test / v_count
-
-        print(f"  • จัดสรร Verified เข้า Val: {target_val} ภาพ, Test: {target_test} ภาพ, Train (Ground Truth): {v_train} ภาพ")
-        print(f"  • ส่งต่อ Unverified ทั้งหมด {len(unverified_samples)} ภาพเข้า Train")
-
-        v_splits = greedy_multilabel_split(verified_samples, (w_train, w_val, w_test))
-        if "val" in v_splits:
-            splits["val"].extend(v_splits["val"])
-        if "test" in v_splits:
-            splits["test"].extend(v_splits["test"])
-        if "train" in v_splits:
-            splits["train"].extend(v_splits["train"])
-        splits["train"].extend(unverified_samples)
-
-    else:
-        # จำนวน Verified มีจำกัด (น้อยกว่าหรือเท่ากับเป้าหมายของ Val + Test)
-        eval_ratio_sum = r_val + r_test
-        if eval_ratio_sum > 0:
-            rel_w_val = r_val / eval_ratio_sum
-            rel_w_test = r_test / eval_ratio_sum
-        else:
-            rel_w_val = 1.0
-            rel_w_test = 0.0
-
-        if strict_val_test:
-            print(f"  • [Strict Gold Standard] สงวนชุด Val & Test เฉพาะไฟล์ที่ตรวจแล้ว 100%")
-            v_splits = greedy_multilabel_split(verified_samples, (0.0, rel_w_val, rel_w_test))
-            if "val" in v_splits:
-                splits["val"].extend(v_splits["val"])
-            if "test" in v_splits:
-                splits["test"].extend(v_splits["test"])
-            splits["train"].extend(unverified_samples)
-            print(f"    - Val  (Verified 100%): {len(splits['val'])} ภาพ")
-            print(f"    - Test (Verified 100%): {len(splits['test'])} ภาพ")
-            print(f"    - Train: {len(splits['train'])} ภาพ (Unverified)")
-        else:
-            print(f"  • [Fill Quota] กระจาย Verified ทั้งหมดเข้า Val/Test และเติมส่วนที่ขาดด้วย Unverified")
-            v_splits = greedy_multilabel_split(verified_samples, (0.0, rel_w_val, rel_w_test))
-            val_v = v_splits.get("val", [])
-            test_v = v_splits.get("test", [])
-
-            needed_val = max(0, target_val - len(val_v))
-            needed_test = max(0, target_test - len(test_v))
-            needed_train = max(0, len(unverified_samples) - needed_val - needed_test)
-
-            total_needed = needed_val + needed_test + needed_train
-            if total_needed > 0 and (needed_val > 0 or needed_test > 0):
-                u_splits = greedy_multilabel_split(
-                    unverified_samples,
-                    (needed_train / total_needed, needed_val / total_needed, needed_test / total_needed)
-                )
-                splits["val"].extend(val_v)
-                splits["val"].extend(u_splits.get("val", []))
-                splits["test"].extend(test_v)
-                splits["test"].extend(u_splits.get("test", []))
-                splits["train"].extend(u_splits.get("train", []))
-            else:
-                splits["val"].extend(val_v)
-                splits["test"].extend(test_v)
-                splits["train"].extend(unverified_samples)
+    # แสดงผลลัพธ์
+    for s_name in ["train", "val", "test"]:
+        if s_name in splits:
+            v_count = sum(1 for item in splits[s_name] if item[3])
+            u_count = len(splits[s_name]) - v_count
+            print(f"    - {s_name.capitalize()}: {len(splits[s_name])} ภาพ (Verified {v_count}, Unverified {u_count})")
 
     return splits
 
@@ -501,8 +519,11 @@ def build_dataset(
     # รวบรวม JSON ที่มีอยู่เพื่อหา class names
     all_valid_jsons = list(json_files.values())
 
+    # สร้าง Cache เพื่อโหลดข้อมูลจาก DB (ถ้ามี) แทนการอ่านไฟล์รัวๆ
+    cache = JSONCache(image_dir, json_dir, classes_file)
+
     # 4. โหลด Class Names
-    classes, name_to_id = load_classes(classes_file, all_valid_jsons, candidate_dirs=[image_dir, json_dir])
+    classes, name_to_id = load_classes(classes_file, all_valid_jsons, candidate_dirs=[image_dir, json_dir], cache=cache)
     print(f"🏷️  Classes ({len(classes)}): {classes}")
 
     # 5. สกัด Labels จาก JSON และจับคู่ภาพ (รวมภาพ Negative และตรวจสอบสถานะ verified)
@@ -519,8 +540,7 @@ def build_dataset(
 
         if json_p is not None:
             try:
-                with open(json_p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = cache.get_data(json_p)
                 is_verified = bool(data.get("checked", False) or data.get("verified", False))
                 labels = [
                     shape.get("label")
@@ -602,8 +622,7 @@ def build_dataset(
             yolo_lines = []
             if json_p is not None and labels:
                 try:
-                    with open(json_p, "r", encoding="utf-8") as f:
-                        data = json.load(f)
+                    data = cache.get_data(json_p)
 
                     img_w = data.get("imageWidth")
                     img_h = data.get("imageHeight")
@@ -631,24 +650,67 @@ def build_dataset(
                 else:
                     lf.write("")
 
-    # 9. สรุปผลตารางสถิติ (พร้อมสถานะ Verified, Unverified, Negative และ Class breakdown)
-    print("\n" + "=" * 90)
-    print("📈 สรุปผลการจัดสรร Dataset (Verification Status, Negatives & Classes)")
-    print("=" * 90)
-    header = f"{'Split':<8} | {'Images':<8} | {'Verified (%)':<16} | {'Unverified (%)':<16} | {'Neg (BG)':<9} | " + " | ".join(f"{c:<10}" for c in classes)
-    print(header)
-    print("-" * len(header))
-    for s_name in ["train", "val", "test"]:
-        if s_name in splits_dict and splits_dict[s_name]:
-            img_cnt = len(splits_dict[s_name])
-            v_cnt = split_ver_stats[s_name]
-            u_cnt = split_unver_stats[s_name]
-            neg_cnt = split_neg_stats[s_name]
-            v_pct = f"{v_cnt} ({v_cnt/img_cnt*100:.1f}%)" if img_cnt > 0 else "0 (0.0%)"
-            u_pct = f"{u_cnt} ({u_cnt/img_cnt*100:.1f}%)" if img_cnt > 0 else "0 (0.0%)"
-            cls_cols = " | ".join(f"{split_stats[s_name][c]:<10}" for c in classes)
-            print(f"{s_name:<8} | {img_cnt:<8} | {v_pct:<16} | {u_pct:<16} | {neg_cnt:<9} | {cls_cols}")
-    print("=" * 90)
+    # 9. สรุปผลตารางสถิติ (แบ่งเป็น 2 ตารางที่อ่านง่าย ชัดเจน และไม่ตกขอบจอ)
+    active_splits = [s for s in ["train", "val", "test"] if s in splits_dict and splits_dict[s]]
+
+    # ตารางที่ 1: ภาพรวมการจัดสรรชุดข้อมูล (Dataset Overview)
+    h1 = f"{'Split':<8} | {'Images':>8} | {'Verified (%)':<16} | {'Unverified (%)':<16} | {'Neg (BG)':<14} | {'Total Bboxes':>12}"
+    border1 = "=" * len(h1)
+    print("\n" + border1)
+    print("📊 [ตารางที่ 1] สรุปชุดข้อมูลแต่ละ Split (Dataset & Verification Overview)")
+    print(border1)
+    print(h1)
+    print("-" * len(h1))
+
+    total_all_img = sum(len(splits_dict[s]) for s in active_splits)
+    total_all_ver = sum(split_ver_stats[s] for s in active_splits)
+    total_all_unver = sum(split_unver_stats[s] for s in active_splits)
+    total_all_neg = sum(split_neg_stats[s] for s in active_splits)
+    total_all_bboxes = sum(sum(split_stats[s].values()) for s in active_splits)
+
+    for s_name in active_splits:
+        img_cnt = len(splits_dict[s_name])
+        v_cnt = split_ver_stats[s_name]
+        u_cnt = split_unver_stats[s_name]
+        neg_cnt = split_neg_stats[s_name]
+        b_cnt = sum(split_stats[s_name].values())
+        v_pct = f"{v_cnt} ({v_cnt/img_cnt*100:.1f}%)" if img_cnt > 0 else "0 (0.0%)"
+        u_pct = f"{u_cnt} ({u_cnt/img_cnt*100:.1f}%)" if img_cnt > 0 else "0 (0.0%)"
+        neg_pct = f"{neg_cnt} ({neg_cnt/img_cnt*100:.1f}%)" if img_cnt > 0 else "0 (0.0%)"
+        print(f"{s_name:<8} | {img_cnt:>8} | {v_pct:<16} | {u_pct:<16} | {neg_pct:<14} | {b_cnt:>12}")
+
+    print("-" * len(h1))
+    t_v_pct = f"{total_all_ver} ({total_all_ver/total_all_img*100:.1f}%)" if total_all_img > 0 else "0 (0.0%)"
+    t_u_pct = f"{total_all_unver} ({total_all_unver/total_all_img*100:.1f}%)" if total_all_img > 0 else "0 (0.0%)"
+    t_neg_pct = f"{total_all_neg} ({total_all_neg/total_all_img*100:.1f}%)" if total_all_img > 0 else "0 (0.0%)"
+    print(f"{'Total':<8} | {total_all_img:>8} | {t_v_pct:<16} | {t_u_pct:<16} | {t_neg_pct:<14} | {total_all_bboxes:>12}")
+    print(border1)
+
+    # ตารางที่ 2: สถิติการกระจายของแต่ละ Class (Class Distribution Matrix)
+    # แสดงเป็นตารางแนวตั้ง จัดเรียงตาม ID คลาส ทำให้อ่านง่ายและไม่ล้นหน้าจอไม่ว่าจะกี่คลาสก็ตาม
+    if classes:
+        max_c_len = max(max(len(c) for c in classes), len("Class Name"))
+        split_cols_hdr = " | ".join(f"{s_name.capitalize() + ' (%)':<16}" for s_name in active_splits)
+        h2 = f"{'ID':<4} | {'Class Name':<{max_c_len}} | {split_cols_hdr} | {'Total':>8}"
+        border2 = "=" * len(h2)
+
+        print("\n" + border2)
+        print("🏷️  [ตารางที่ 2] สถิติการกระจายของแต่ละ Class (Class Distribution per Split)")
+        print(border2)
+        print(h2)
+        print("-" * len(h2))
+
+        for idx, c in enumerate(classes):
+            c_total = sum(split_stats[s][c] for s in active_splits)
+            split_vals = []
+            for s in active_splits:
+                cnt = split_stats[s][c]
+                pct = f"{cnt/c_total*100:.1f}%" if c_total > 0 else "0.0%"
+                split_vals.append(f"{cnt} ({pct})")
+            split_cols_str = " | ".join(f"{v:<16}" for v in split_vals)
+            print(f"{idx:<4} | {c:<{max_c_len}} | {split_cols_str} | {c_total:>8}")
+
+        print(border2)
 
     # 10. สร้าง / อัปเดต data.yaml
     if data_yaml_path is None:

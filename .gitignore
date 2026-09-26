@@ -38,3 +38,7 @@ Thumbs.db
 *.log
 scratch/
 PREVIEW_Mobile-friendly Annotation Tool.html
+.label_tmp/
+*.tmp
+
+*work_spaces/*

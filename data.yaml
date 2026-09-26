@@ -1,24 +1,10 @@
-path: D:/WindowsMega/yolo_training/test_run_build
+﻿path: D:/WindowsMega/yolo_training/datasets
 train: images/train
 val: images/val
-names:
-  0: FEMALE_GENITALIA_COVERED
-  1: FACE_FEMALE
-  2: BUTTOCKS_EXPOSED
-  3: FEMALE_BREAST_EXPOSED
-  4: FEMALE_GENITALIA_EXPOSED
-  5: MALE_BREAST_EXPOSED
-  6: ANUS_EXPOSED
-  7: FEET_EXPOSED
-  8: BELLY_COVERED
-  9: FEET_COVERED
-  10: ARMPITS_COVERED
-  11: ARMPITS_EXPOSED
-  12: FACE_MALE
-  13: BELLY_EXPOSED
-  14: MALE_GENITALIA_EXPOSED
-  15: ANUS_COVERED
-  16: FEMALE_BREAST_COVERED
-  17: BUTTOCKS_COVERED
-  18: HAND
 test: images/test
+names:
+  0: CAT
+  1: DOG
+  2: BIRD
+  3: RABBIT
+  4: FISH
